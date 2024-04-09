@@ -16,10 +16,11 @@ plt.style.use("fivethirtyeight")
 st.title("Digi Analysis")
 
 last_call = pd.read_csv("app_data/last_call_date.csv", parse_dates=["last_call"])
-st.write(f'Data up to date as of: {last_call.last_call.iloc[-1].strftime("%d-%m-%Y")}')
+st.sidebar.subheader("LAST DATA CALL:")
+st.sidebar.write(f'Data up to date as of: {last_call.last_call.iloc[-1].strftime("%d-%m-%Y")}')
 minutes = round((datetime.datetime.now() - last_call.last_call.iloc[-1]).seconds/60)
 days = (datetime.datetime.now() - last_call.last_call.iloc[-1]).days
-st.write(f"{days} days and {minutes} minutes ago!")
+st.sidebar.write(f"{days} days and {minutes} minutes ago!")
 
 # data = st.sidebar.button("Update Data")
 # if data:
@@ -31,33 +32,27 @@ print(df_account.shape)
 
 
 
-view = st.sidebar.radio("Select a tool to view / call in data", ["Back End", "Front End", "Data Call"])
+view = st.sidebar.radio("Select a tool to view / call in data", ["Back End", "Front End", "Data Call", "Synthetic"])
 
-st.sidebar.color_picker("color")
+# st.sidebar.color_picker("color")
+#
+# backend = st.sidebar.button("backend")
+# frontend = st.sidebar.button("frontend")
 
-backend = st.sidebar.button("backend")
-frontend = st.sidebar.button("frontend")
 
 def plotter(dataframe, plot_stat, df_type, width=250):
-    # fig = px.line(plot_df, x=metric_sel, y=points_type,
-    #                  animation_frame="round", animation_group="code",
-    #                  range_x=[min_x, max_x], range_y=[0, max_y], size="sel_size",
-    #                  hover_name="web_name", color="plot_color", opacity=0.9,
-    #                  hover_data={'now_cost': True, 'round': False, "gw_points": True, "total_points": True,
-    #                              'minutes': True, 'plot_color': False, 'sel_size': False},
-    #                  width=1000, height=550)
+
     plt.style.use("fivethirtyeight")
     fig = px.line(data_frame=dataframe, x=plot_stat, y=dataframe.index,
                   width=width, height=400,
-
                   title=f"{df_type}"
                   )
 
     # fig.update_layout(title=f"Account Growth: {df_type}")
     fig.update_layout(yaxis_title="Number of Accounts", xaxis_title="Days App Live")
 
-
     return fig
+
 
 if view == "Back End":
     statSelect = st.radio("Select Statistics", ["account", "family", "profile"], horizontal=True)
@@ -203,7 +198,22 @@ elif view=="Data Call":
 
 
 
-else:
-    statSelect = st.radio("Select Profile Statistics", ["tasks", "history", "status"], horizontal=True)
-    sel_1, sel_2, sel_3 = st.columns(3)
+elif view=="Synthetic":
+    sel1, sel2, sel3 = st.columns(3)
+    with sel1:
+        time_period = st.selectbox("Select a Time Period", ["Week", "Month"])
+
+    st.plotly_chart(generate_plot_dense_data(time_period=time_period
+    ))
+
+
+elif view == "Front End":
+    statSelect = st.radio("Select Profile Statistics", ["family"], horizontal=True)
+    data_collection = requests.get(f"https://int1.digitheapp.com:5400/report-account/get-{statSelect}-collection",
+                                   verify=False).json()
+    df = pd.DataFrame.from_dict(data_collection)
+    sel1, sel2, sel3 = st.columns(3)
+    with sel1:
+        fam_id = st.selectbox("Select Family Id", df._id.unique())
+
 

@@ -7,6 +7,9 @@ import plotly_express as px
 import time
 import datetime
 import matplotlib.pyplot as plt
+import numpy as np
+import random
+from scipy import stats
 
 def call_data():
     # Accounts
@@ -112,5 +115,61 @@ def plotly_strip_plots(data, x="child_ref", y="targetDiff", color="taskDefinitio
     )
 
     #  fig.show()
+
+    return fig
+
+
+##### SYNTHETIC DATA ####
+def get_density(x:np.ndarray, y:np.ndarray):
+    """Get kernal density estimate for each (x, y) point."""
+    values = np.vstack([x, y])
+    kernel = stats.gaussian_kde(values)
+    density = kernel(values)
+    return density
+def generate_plot_dense_data(time_period=str()):
+    if time_period == "Week":
+        x = np.random.normal(18, 25, 100000)
+        x = np.array(random.choices(x[[z > 0 for z in x]], k=2000)) + 1
+        y = ((0.8 * x + np.random.randn(2000) / 0.08) + 34) / 4.3
+
+        df_child_tasks_comp = pd.DataFrame([x, y], index=["num_children", "tasks_completed"]).T
+        df_child_tasks_comp = df_child_tasks_comp.astype(int)
+
+        d = get_density(x, y)
+
+        df_child_tasks_comp["density"] = d * 1000
+        df_child_tasks_comp["density"] = df_child_tasks_comp.density.round(4)
+
+    elif time_period == "Month":
+        x = np.random.normal(18, 25, 100000)
+        x = np.array(random.choices(x[[z > 0 for z in x]], k=2000)) + 1
+        y = ((0.8 * x + np.random.randn(2000) / 0.08) + 34)
+
+        df_child_tasks_comp = pd.DataFrame([x, y], index=["num_children", "tasks_completed"]).T
+        df_child_tasks_comp = df_child_tasks_comp.astype(int)
+
+        d = get_density(x, y)
+
+        df_child_tasks_comp["density"] = d * 10000
+        df_child_tasks_comp["density"] = df_child_tasks_comp.density.round(4)
+
+    #         df_child_tasks_comp = generate_dense_data(time_period=time_period)
+    fig = px.scatter(data_frame=df_child_tasks_comp, x=df_child_tasks_comp.num_children,
+                     y=df_child_tasks_comp.tasks_completed, color=df_child_tasks_comp.density,
+                     hover_name=df_child_tasks_comp.index,
+                     hover_data={'num_children': True, "density": True},
+                     color_continuous_scale=px.colors.sequential.Plasma, width=1000, height=400
+                     )
+    # fig.update_layout(showlegend=legend)
+    fig.update_layout(
+        xaxis_title="Number of Children in Family",
+        yaxis_title=f"Tasks completed in last {time_period}",
+        coloraxis_colorbar_title_text="family density",
+
+        title=f"Family Density by Size and Tasks Completed for last {time_period}"
+
+    )
+
+    #     fig.show()
 
     return fig
