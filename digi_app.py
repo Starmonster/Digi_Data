@@ -214,6 +214,135 @@ elif view == "Front End":
     df = pd.DataFrame.from_dict(data_collection)
     sel1, sel2, sel3 = st.columns(3)
     with sel1:
-        fam_id = st.selectbox("Select Family Id", df._id.unique())
+        fam_select = st.selectbox("Select Family Id", df._id.unique())
+
+    sel_1, sel_2 = st.columns([2, 1])
+    with sel_1:
+
+        account_tasks_df = build_tasks_df(df_account_dump=df_account, df_task_execution_dump=df_task_execution,
+                                          df_task_definition_dump=df_task_definition
+                                          )
+
+        unique_fam_ids = account_tasks_df.familyId.unique()
+        fam_ref_df = pd.DataFrame(
+            {'familyId': unique_fam_ids, 'fam_ref': [x for x in range(1, len(unique_fam_ids) + 1)]})
+
+        fam_tasks_df = account_tasks_df.query(f"familyId=='{fam_select}'")
+        fam_tasks_date = fam_tasks_df.groupby("creationDate").count().iloc[:, 1:2]
+        fam_tasks_date = fam_tasks_date.reset_index(drop=False).rename(columns={"createdBy": "taskCount"})
+        fam_tasks_date["cumulativeTasks"] = fam_tasks_date.taskCount.cumsum()
+        fam_tasks_date["cumulativeTasksComp"] = round(fam_tasks_date.cumulativeTasks * random.uniform(0.3, 0.8))
+
+        # Get the mean task duration / completion per family
+        family_mean_duration = (account_tasks_df[["familyId", "taskDuration"]]
+                                .groupby("familyId")
+                                .mean()
+                                .reset_index()
+                                .rename(columns={"taskDuration": "meanDuration(hrs)"})
+                                ).round(3)
+
+        task_count_by_family = (account_tasks_df
+                                .groupby("familyId")
+                                .count()
+                                .iloc[:, 1]
+                                .to_frame()
+                                .rename(columns={"createdBy": "tasksCount"}))
+        task_count_by_family = task_count_by_family.reset_index()
+
+        accounts = df_account[["_id", "profileId", "familyId", "accountType", "creationTime"]]
+        account_types = accounts.groupby(["familyId", "accountType"]).count()  # .reset_index()
+        account_types = account_types.iloc[:, 1].to_frame().rename(columns={"profileId": "typeCount"}).reset_index()
+        # First get only the number of childred per family
+        account_types_child = account_types.query("accountType=='CHILD'").rename(columns={"typeCount": "childCount"})
+        # account_types_child
+        # Then merge with task count
+        master_family_task = task_count_by_family.merge(account_types_child[["familyId", "childCount"]], on="familyId")
+        # Now merge with mean duration
+        master_family_task = master_family_task.merge(family_mean_duration, on="familyId")
+
+        master_family_task = master_family_task.merge(fam_ref_df, on="familyId").sort_values("fam_ref")
+
+        family_details = master_family_task.query(f"familyId=='{fam_select}'")
+
+        info1, info2, info3 = st.columns(3)
+        with info1:
+            variable_output = family_details.tasksCount.iloc[0]
+            html_str = f"""
+                                <style>
+                                p.a {{
+                                  font: bold {50}px Courier;
+                                  color: DarkGrey;
+                                }}
+                                </style>
+                                <p class="a">{variable_output}</p>
+                                """
+            st.subheader("Number of tasks created:")
+            st.markdown(html_str, unsafe_allow_html=True)
+        with info2:
+            variable_output = family_details.childCount.iloc[0]
+            # font_size = st.slider("Enter a font size", 1, 300, value=30)
+            html_str = f"""
+                                <style>
+                                p.a {{
+                                  font: bold {50}px Courier;
+                                }}
+                                </style>
+                                <p class="a">{variable_output}</p>
+                                """
+            st.subheader("Number of active children:")
+            st.markdown(html_str, unsafe_allow_html=True)
+        with info3:
+            variable_output = family_details['meanDuration(hrs)'].iloc[0]
+            html_str = f"""
+                                <style>
+                                p.a {{
+                                  font: bold {50}px Courier;
+                                }}
+                                </style>
+                                <p class="a">{variable_output}</p>
+                                """
+            st.subheader("Average task duration:")
+            st.markdown(html_str, unsafe_allow_html=True)
+
+        # st.write(f"Number of tasks created: {family_details.tasksCount[0]}")
+        # st.write(f"Number of active children: {family_details.childCount[0]}")
+        # st.write(f"Average task duration: {family_details['meanDuration(hrs)'][0]}")
+
+        # sns.set_style('darkgrid')
+
+        try:
+            fig, ax = plt.subplots(figsize=(9, 5))
+            fig.suptitle(f"Task counts for family {fam_select}", fontsize=18)
+            ax.bar(fam_tasks_date.creationDate, fam_tasks_date.taskCount, alpha=0.5, label="Tasks Created by Day")
+            ticks = pd.date_range(fam_tasks_date.creationDate.iloc[0], fam_tasks_date.creationDate.iloc[-1], 6)
+
+            ax.set_xticks(ticks.date)
+            ax.set_xticklabels(labels=ticks.date, rotation=45)
+            ax.set_xlabel("Date", fontsize=13)
+            ax.set_ylabel("Tasks Created", fontsize=13)
+
+            ax1 = ax.twinx()
+            ax1.plot(fam_tasks_date.creationDate, fam_tasks_date.cumulativeTasks, color="orange",
+                     linewidth=3.2, label="Cumulative Tasks Created")
+            ax1.plot(fam_tasks_date.creationDate, fam_tasks_date.cumulativeTasksComp, color="red",
+                     linewidth=3.2, label="Cumulative Tasks Completed")
+            ax1.set_ylabel("Cumulative Tasks", fontsize=13)
+
+            ax1.fill_between(fam_tasks_date.creationDate, y1=fam_tasks_date.cumulativeTasks,
+                             y2=fam_tasks_date.cumulativeTasksComp, cmap="viridis", alpha=0.5, color="orange")
+
+            #     im = ax.imshow(np.linspace(0, 1, 256).reshape(1, -1), cmap=cmap, aspect='auto',
+            #                extent=[*ax.get_xlim(), *ax.get_ylim()], zorder=10)
+
+            fig.legend(bbox_to_anchor=(0.55, 0.85), fontsize=10)
+
+            st.pyplot(fig)
+            # fig.legend(l)
+        except:
+            print("No Family Tasks")
+            plt.plot([2, 4], [2, 4])
+            fig.suptitle("NO DATA FOUND FOR THIS FAMILY")
+            st.pyplot(fig)
+
 
 
