@@ -2,9 +2,11 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly_express as px
+import plotly.graph_objects as go
 import time
 import datetime
 import matplotlib.pyplot as plt
+# import seaborn as sns
 from digi_plotfuncs import *
 from data_call import *
 
@@ -32,182 +34,228 @@ print(df_account.shape)
 
 
 
-view = st.sidebar.radio("Select a tool to view / call in data", ["Back End", "Front End", "Data Call", "Synthetic"])
-
-# st.sidebar.color_picker("color")
-#
-# backend = st.sidebar.button("backend")
-# frontend = st.sidebar.button("frontend")
+# view = st.sidebar.radio("Select a tool to view / call in data", ["Back End", "Front End", "Data Call", "Synthetic"])
+view_ = st.sidebar.selectbox("Select dashboard", ["Downloads", "Accounts", "Membership", "Tasks", "Front End"])
 
 
-def plotter(dataframe, plot_stat, df_type, width=250):
+if view_ == "Accounts":
 
-    plt.style.use("fivethirtyeight")
-    fig = px.line(data_frame=dataframe, x=plot_stat, y=dataframe.index,
-                  width=width, height=400,
-                  title=f"{df_type}"
-                  )
-
-    # fig.update_layout(title=f"Account Growth: {df_type}")
-    fig.update_layout(yaxis_title="Number of Accounts", xaxis_title="Days App Live")
-
-    return fig
+    # Get family set for merge with task df later down sheet
+    # account_db, account_server = call_db(database="digi-account")
+    # family_df = pd.DataFrame(list(account_db["user-family"].find()))
 
 
-if view == "Back End":
-    statSelect = st.radio("Select Statistics", ["account", "family", "profile"], horizontal=True)
 
-    data_collection = requests.get(f"https://int1.digitheapp.com:5400/report-account/get-{statSelect}-collection",
-                                      verify=False).json()
-    df = pd.DataFrame.from_dict(data_collection)
-    df["creationTime"] = pd.to_datetime(df.creationTime)
-    df["creationTime"] = df.creationTime.dt.strftime('%Y-%m-%d %H:%M:%S')
-    df["creationTime"] = pd.to_datetime(df.creationTime)
-    df["dayOfYear"] = df.creationTime.dt.dayofyear
-    df["daysLive"] = df.dayOfYear - 47
+    # account_df = pd.DataFrame(list(account_db["user-account"].find()))
+    account_df = pd.read_csv("account_df.csv")
+    account_df["creationTime"] = pd.to_datetime(account_df.creationTime)
+    account_df["creationTime"] = account_df.creationTime.dt.strftime('%Y-%m-%d %H:%M:%S')
+    account_df["creationTime"] = pd.to_datetime(account_df.creationTime)
+    account_df["dayOfYear"] = account_df.creationTime.dt.dayofyear
+    account_df["daysLive"] = account_df.dayOfYear - 65
 
-    df = df.dropna(subset=["creationTime"], axis=0)
-    print(df.columns)
+    # print(account_df._id.nunique(), account_df.shape)
+    account_df = account_df.sort_values("creationTime").reset_index(drop=True)
+    account_df["creationDate"] = pd.to_datetime(account_df.creationTime.dt.date)
 
-    # Split by child and adult accounts
-    if statSelect == "account":
-        df_child = df.query("accountType == 'CHILD'").reset_index(drop=True).sort_values('creationTime')
-        df_adult = df.query("accountType == 'ADULT'").reset_index(drop=True).sort_values('creationTime')
+    full_period = pd.date_range(account_df.creationDate.min(), account_df.creationDate.max())
+    full_period_df = pd.DataFrame(full_period, columns=["creationDate"])
 
-        df= df.sort_values("creationTime")
+    new_accounts_grouped = (account_df
+                            .groupby(["creationDate", "accountType", "status", "country"])
+                            .count()
+                            .iloc[:, 1]
+                            .to_frame()
+                            .rename(columns={"profileId": "newAccounts"})
+                            .reset_index()
+                            )
 
-        st.subheader(statSelect.title() + " Adoption Rate")
 
-        sel_1, sel_2, sel_3 = st.columns([3, 2, 2])
+    st.subheader(view_.title() + " Adoption Rate")
+    sli_1, sli_2, sli_3, sli_4 = st.columns(4)
+    st.write('<style>div.row-widget.stRadio > div{flex-direction:row;justify-content: left;} </style>',
+             unsafe_allow_html=True)
+    with sli_1:
+        period_select = st.slider("Rolling Daily Period (Sum)", 5, 30, value=7)
+    with sli_3:
+        view_select = st.radio("Time View", ["daysLive", "creationDate"])
+
+
+    new_accounts_df = full_period_df.merge(new_accounts_grouped,
+                                           on="creationDate", how="left").fillna(0)
+    daily_accounts_df = new_accounts_df.groupby("creationDate")[["newAccounts"]].sum().reset_index()
+    daily_accounts_df["newAccountAve"] = daily_accounts_df.newAccounts.rolling(window=period_select, min_periods=1).sum()
+    daily_accounts_df["totalAccounts"] = daily_accounts_df.newAccounts.cumsum()
+    daily_accounts_df["daysLive"] = list(range(1, daily_accounts_df.shape[0] + 1))
+
+    new_accounts_child = new_accounts_df.query(f"accountType=='CHILD'")
+    new_accounts_child = full_period_df.merge(new_accounts_child,
+                                              on="creationDate", how="left").fillna(0)
+    daily_child_df = new_accounts_child.groupby("creationDate")[["newAccounts"]].sum().reset_index()
+    daily_child_df["totalAccounts"] = daily_child_df.newAccounts.cumsum()
+    daily_child_df["newAccountAve"] = daily_child_df.newAccounts.rolling(window=period_select, min_periods=1).sum()
+    daily_child_df["daysLive"] = list(range(1, daily_child_df.shape[0] + 1))
+
+    new_accounts_adult = new_accounts_df.query(f"accountType=='ADULT'")
+    new_accounts_adult = full_period_df.merge(new_accounts_adult,
+                                              on="creationDate", how="left").fillna(0)
+    daily_adult_df = new_accounts_adult.groupby("creationDate")[["newAccounts"]].sum().reset_index()
+    daily_adult_df["totalAccounts"] = daily_adult_df.newAccounts.cumsum()
+    daily_adult_df["newAccountAve"] = daily_adult_df.newAccounts.rolling(window=period_select, min_periods=1).sum()
+    daily_adult_df["daysLive"] = list(range(1, daily_adult_df.shape[0] + 1))
+
+    sel_1, sel_2, sel_3 = st.columns([5, 3, 3])
+
+    if view_select == "daysLive":
+        with sel_1:
+            st.plotly_chart(plotter(daily_accounts_df, plot_stat=view_select, period_select=period_select,
+                                    df_type=" ", width=550))
+        with sel_2:
+            st.plotly_chart(plotter(daily_child_df, plot_stat=view_select, period_select=period_select,
+                                    df_type=" Child "))
+        with sel_3:
+            st.plotly_chart(plotter(daily_adult_df, plot_stat=view_select, period_select=period_select,
+                                    df_type=" Adult "))
+
+    elif view_select == "creationDate":
 
         with sel_1:
-            st.plotly_chart(plotter(df, plot_stat="daysLive", df_type="All Accounts", width=400))
-
+            # st.plotly_chart(fig1)
+            st.plotly_chart(plotter(daily_accounts_df, plot_stat=view_select, period_select=period_select,
+                                    df_type=" ", width=550))
         with sel_2:
-            st.plotly_chart(plotter(df_child, plot_stat="daysLive", df_type="Child Accounts"))
-
+            # df_child = new_accounts_df.query("accountType=='CHILD'")
+            st.plotly_chart(plotter(daily_child_df, plot_stat=view_select, period_select=period_select,
+                                    df_type=" Child "))
         with sel_3:
-            st.plotly_chart(plotter(df_adult, plot_stat="daysLive", df_type="Adult Accounts"))
+            # df_adult = new_accounts_df.query("accountType=='ADULT'")
+            st.plotly_chart(plotter(daily_adult_df, plot_stat=view_select, period_select=period_select,
+                                    df_type=" Adult "))
+
+    st.subheader("Account Status Split")
+    acc_pie1, acc_pie2, acc_pie3 = st.columns([5,3,3])
+
+    with acc_pie1:
+        st.plotly_chart(status_pie(new_accounts_df=new_accounts_df, task_view="total"))
+    with acc_pie2:
+        st.plotly_chart(status_pie(new_accounts_df=new_accounts_df, task_view="child"))
+    with acc_pie3:
+        st.plotly_chart(status_pie(new_accounts_df=new_accounts_df, task_view="adult"))
 
 
 
-        st.subheader("Tasks Summary")
-        st.write("Each marker represents a single task record!")
-        account_tasks_df = build_tasks_df(df_account_dump=df_account, df_task_execution_dump=df_task_execution,
-                                          df_task_definition_dump=df_task_definition
-                                          )
 
-        task_col_1, task_col_2 = st.columns([1,1])
-        with task_col_1:
-            st.plotly_chart(plotly_strip_plots(data=account_tasks_df))
-        with task_col_2:
-            st.plotly_chart(plotly_strip_plots(data=account_tasks_df, y="taskDuration",
-                                               title="Task Duration per Child / Task Type", ylabel="Task Duration"))
+        #############
+elif view_ == "Tasks":
+    # Call data
+    # task_db, task_server = call_db(database="digi-task")
+    # task_definition_df = pd.DataFrame(list(task_db["task-definition"].find()))
+    task_definition_df = pd.read_csv("task_definition_df.csv", parse_dates=["creationDatetime"])
+    # Get synthetic task types as the task descriptors are too numerous to make visuals
+    task_types = []
+    for dp in list(range(0, len(task_definition_df))):
+        task_types.append(random.choice(["homework", "homework", "chores", "sleep", "family"]))
 
-        task_col_3, task_col_4 = st.columns([1,1])
-        with task_col_3:
-            st.plotly_chart(plotly_strip_plots(data=account_tasks_df, x="fam_ref", y="taskDuration",
-                                               title="Task Duration for Family by Child ", xlabel="Family Name",
-                                               ylabel="Task Duration(H)", legend=True,
-                                               color="child_ref", stripmode="overlay"))
-        with task_col_4:
-            st.plotly_chart(plotly_strip_plots(data=account_tasks_df, x="weekOfYear", y="taskDuration", color="fam_ref",
-                                              title="Task Duration per Family - Weekly Basis", xlabel="Week of Year",
-                                              ylabel="Task Duration", legend=True, stripmode="overlay"))
-
-
-        st.subheader(statSelect.title() + " Operating Systems")
-
-        # Get new features relating to operating systems
-        df["devicesLinked"] = [len(row.devices) for ind, row in df.iterrows()]
-        devicesInfo = [row.devices if len(row.devices) > 0 else None for ind, row in df.iterrows()]
-        df["devicesInfo"] = devicesInfo
-
-
-        def get_device_type(row):
-
-            devices = []
-
-            if row.devicesInfo is None:
-                return "No Device"
-            else:
-                list_of_types = [x["type"] for x in row.devicesInfo]
-                return ", ".join(list_of_types)
-
-
-        df["deviceOS"] = df.apply(get_device_type, axis='columns')
-
-        os = df.groupby(["deviceOS", "status"]).count()[["_id"]].rename(columns={"_id": "osCount"})
-        osCount = df.groupby("deviceOS").count()[["_id"]].rename(columns={"_id": "osCount"})
-
-        osCount_ = osCount.reset_index().rename(columns={"osCount": "osTotal"})
-        os_ = os.reset_index()
-
-        osA = os_.merge(osCount_, on="deviceOS").set_index(["deviceOS", "status"])
-
-        plot_os = osA[["osCount"]].unstack()
-        plot_os.columns = ["Active", "Inactive", "Inactive_Pending", "Pending"]
-
-        plot_os = plot_os.fillna(0).reset_index()
-
-        fig1 = px.bar(plot_os, x=plot_os.index, y=["Active", "Inactive", "Inactive_Pending", "Pending"],
-                     barmode='group'
-                     )  # .update_traces(width=0.2)
-
-        fig1.update_layout(
-            xaxis=dict(
-                tickangle=-35,
-                tickmode='array',
-                tickvals=[0, 1, 2, 3, 4, 5],
-                ticktext=plot_os.deviceOS.tolist()
-            )
-        )
-
-        fig1.update_layout(
-            xaxis_title="Operating System",
-            yaxis_title="Status Count",
-
-            title=f"Status of All Linked Operating Systems",
-            # title= f"Requested Metrics: volatility < {round(vol,3)} over {timeperiod} days",
-            title_font_color="#003865"
-
-        )
-
-        st.plotly_chart(fig1)
-
-    elif statSelect == "family":
-
-        st.selectbox("Select a family id", )
-
-    st.subheader("Data Visual Ideas")
-    st.write("Tasks Started / Completed in last n days")
-    st.write("Task completion time per child")
-    st.write("Membership Expiries in next 1,2,7,14,30 days")
-    st.write("Operating Systems Linked")
-    st.write("Expected time vs actual time to complete tasks")
-
-
-elif view=="Data Call":
-    st.title("Data Call in Page")
-
-    if st.button("update data"):
-        with st.spinner('Wait for it...'):
-            st.write("Awaiting security permissions... No call available at this time")
-            # data_call()
-            time.sleep(5)
+    task_definition_df["task_type"] = task_types
 
 
 
-elif view=="Synthetic":
-    sel1, sel2, sel3 = st.columns(3)
-    with sel1:
-        time_period = st.selectbox("Select a Time Period", ["Week", "Month"])
+    # st.title("Tasks Summary")
+    st.subheader("Task Variables")
+    tv_1, tv_2, tv_3 = st.columns([2, 2, 1])
 
-    st.plotly_chart(generate_plot_dense_data(time_period=time_period
-    ))
+    with tv_1:
+        task_view = st.selectbox("Select a task view", ["Total", "Family", "Child"])
+
+    if task_view == "Child":
+        with tv_2:
+
+            task_definition_df["childrenIds"] = task_definition_df.childrenIds.apply(lambda x: x[0])
+            child_select = st.selectbox("Select Child to View", task_definition_df.childrenIds.unique())
+
+            total_tasks_df = generate_tasks_df(tasks_data=task_definition_df, child_select=child_select, task_view="Child")
+    elif task_view == "Family":
+        with tv_2:
+            # Get family set for merge with task df later down sheet
+            # account_db, account_server = call_db(database="digi-account")
+            # family_df = pd.DataFrame(list(account_db["user-family"].find()))
+            # family_df = pd.read_csv("family_df.csv")
+            # family_df = family_df.rename(columns={"_id": "familyId"})
+            # family_df = family_df.rename(columns={"_id": "familyId"})
+            # Add the family id into the task definition df
+            # task_definition_df = task_definition_df.merge(family_df[["createdBy", "familyId"]], on="createdBy")
+            print("COLUMNS", task_definition_df.columns)
+
+            family_select = st.selectbox("Select Family to View", task_definition_df.familyId.unique())
+            total_tasks_df = generate_tasks_df(tasks_data=task_definition_df, family_select=family_select, task_view="Family")
+    else:
+        total_tasks_df = generate_tasks_df(tasks_data=task_definition_df)
+
+    tc_1, tc_2, tc3 = st.columns([2, 2, 1])
+    with tc_1:
+        time_scale = st.selectbox("Select a time format", ["Date", "Days", "Weeks", "Months"])
+    with tc_2:
+        window = st.slider("Select Daily Rolling Average", 2, 30, value=7)
+
+    # chart1, chart2, chart3 = st.columns([1, 4, 1])
+    # with chart2:
+    st.plotly_chart(plot_tasks_created(time_scale=time_scale, window=window,
+                                       task_data=total_tasks_df, task_view=task_view))
+
+    st.write("")
+    pie1, pie2, pie3, pie4 = st.columns([1, 3, 3, 1])
+    # with pie1:
+    #     st.subheader("Task Split")
+    with pie2:
+        st.subheader("Task Split")
+        if task_view == "Child":
+            st.write("")
+            st.plotly_chart(pie_plot(tasks_data=task_definition_df, child_select=child_select, task_view=task_view))
+        elif task_view == "Family":
+            st.write("")
+            st.plotly_chart(pie_plot(tasks_data=task_definition_df, family_select=family_select, task_view=task_view))
+
+        elif task_view == "Total":
+            st.write("")
+            st.plotly_chart(pie_plot(tasks_data=task_definition_df, task_view=task_view))
 
 
-elif view == "Front End":
+
+
+    # PHASE 1 WORK BELOW
+    #################################################
+
+
+    st.write("")
+    st.write("")
+    st.subheader("Work in Progress / wireframing below!")
+    st.write("Each marker represents a single task record!")
+    account_tasks_df = build_tasks_df(df_account_dump=df_account, df_task_execution_dump=df_task_execution,
+                                      df_task_definition_dump=df_task_definition
+                                      )
+
+    task_col_1, task_col_2 = st.columns([1,1])
+    with task_col_1:
+        st.plotly_chart(plotly_strip_plots(data=account_tasks_df))
+    with task_col_2:
+        st.plotly_chart(plotly_strip_plots(data=account_tasks_df, y="taskDuration",
+                                           title="Task Duration per Child / Task Type", ylabel="Task Duration"))
+
+    task_col_3, task_col_4 = st.columns([1,1])
+    with task_col_3:
+        st.plotly_chart(plotly_strip_plots(data=account_tasks_df, x="fam_ref", y="taskDuration",
+                                           title="Task Duration for Family by Child ", xlabel="Family Name",
+                                           ylabel="Task Duration(H)", legend=True,
+                                           color="child_ref", stripmode="overlay"))
+    with task_col_4:
+        st.plotly_chart(plotly_strip_plots(data=account_tasks_df, x="weekOfYear", y="taskDuration", color="fam_ref",
+                                          title="Task Duration per Family - Weekly Basis", xlabel="Week of Year",
+                                          ylabel="Task Duration", legend=True, stripmode="overlay"))
+
+#################################################################################
+
+#
+elif view_ == "Front End":
     statSelect = st.radio("Select Profile Statistics", ["family"], horizontal=True)
     data_collection = requests.get(f"https://int1.digitheapp.com:5400/report-account/get-{statSelect}-collection",
                                    verify=False).json()
@@ -216,7 +264,7 @@ elif view == "Front End":
     with sel1:
         fam_select = st.selectbox("Select Family Id", df._id.unique())
 
-    sel_1, sel_2 = st.columns([2, 1])
+    sel_1, sel_2 = st.columns([2,1])
     with sel_1:
 
         account_tasks_df = build_tasks_df(df_account_dump=df_account, df_task_execution_dump=df_task_execution,
@@ -224,8 +272,7 @@ elif view == "Front End":
                                           )
 
         unique_fam_ids = account_tasks_df.familyId.unique()
-        fam_ref_df = pd.DataFrame(
-            {'familyId': unique_fam_ids, 'fam_ref': [x for x in range(1, len(unique_fam_ids) + 1)]})
+        fam_ref_df = pd.DataFrame({'familyId': unique_fam_ids, 'fam_ref': [x for x in range(1, len(unique_fam_ids) + 1)]})
 
         fam_tasks_df = account_tasks_df.query(f"familyId=='{fam_select}'")
         fam_tasks_date = fam_tasks_df.groupby("creationDate").count().iloc[:, 1:2]
@@ -264,45 +311,50 @@ elif view == "Front End":
 
         family_details = master_family_task.query(f"familyId=='{fam_select}'")
 
+
         info1, info2, info3 = st.columns(3)
         with info1:
             variable_output = family_details.tasksCount.iloc[0]
             html_str = f"""
-                                <style>
-                                p.a {{
-                                  font: bold {50}px Courier;
-                                  color: DarkGrey;
-                                }}
-                                </style>
-                                <p class="a">{variable_output}</p>
-                                """
+                            <style>
+                            p.a {{
+                              font: bold {50}px Courier;
+                              color: DarkGrey;
+                            }}
+                            </style>
+                            <p class="a">{variable_output}</p>
+                            """
             st.subheader("Number of tasks created:")
             st.markdown(html_str, unsafe_allow_html=True)
         with info2:
             variable_output = family_details.childCount.iloc[0]
             # font_size = st.slider("Enter a font size", 1, 300, value=30)
             html_str = f"""
-                                <style>
-                                p.a {{
-                                  font: bold {50}px Courier;
-                                }}
-                                </style>
-                                <p class="a">{variable_output}</p>
-                                """
+                            <style>
+                            p.a {{
+                              font: bold {50}px Courier;
+                            }}
+                            </style>
+                            <p class="a">{variable_output}</p>
+                            """
             st.subheader("Number of active children:")
             st.markdown(html_str, unsafe_allow_html=True)
         with info3:
-            variable_output = family_details['meanDuration(hrs)'].iloc[0]
+            variable_output=family_details['meanDuration(hrs)'].iloc[0]
             html_str = f"""
-                                <style>
-                                p.a {{
-                                  font: bold {50}px Courier;
-                                }}
-                                </style>
-                                <p class="a">{variable_output}</p>
-                                """
+                            <style>
+                            p.a {{
+                              font: bold {50}px Courier;
+                            }}
+                            </style>
+                            <p class="a">{variable_output}</p>
+                            """
             st.subheader("Average task duration:")
             st.markdown(html_str, unsafe_allow_html=True)
+
+
+
+
 
         # st.write(f"Number of tasks created: {family_details.tasksCount[0]}")
         # st.write(f"Number of active children: {family_details.childCount[0]}")
@@ -343,6 +395,3 @@ elif view == "Front End":
             plt.plot([2, 4], [2, 4])
             fig.suptitle("NO DATA FOUND FOR THIS FAMILY")
             st.pyplot(fig)
-
-
-
